@@ -57,6 +57,80 @@ def normalize_number(text):
     except:
         return text
 
+def run_search_logic(query, unit="법률"):
+    result_dict = {}
+    keyword_clean = clean(query)
+
+    for law in get_law_list_from_api(query):
+        mst = law["MST"]
+        xml_data = get_law_text_by_mst(mst)
+        if not xml_data:
+            continue
+
+        tree = ET.fromstring(xml_data)
+        articles = tree.findall(".//조문단위")
+        law_results = []
+
+        for article in articles:
+            조번호 = article.findtext("조문번호", "").strip()
+            조가지번호 = article.findtext("조문가지번호", "").strip()
+            조문식별자 = make_article_number(조번호, 조가지번호)
+            조문내용 = article.findtext("조문내용", "") or ""
+            항들 = article.findall("항")
+            출력덩어리 = []
+            조출력 = keyword_clean in clean(조문내용)
+            첫_항출력됨 = False
+
+            if 조출력:
+                출력덩어리.append(highlight(조문내용, query))
+
+            for 항 in 항들:
+                항번호 = normalize_number(항.findtext("항번호", "").strip())
+                항내용 = 항.findtext("항내용", "") or ""
+                항출력 = keyword_clean in clean(항내용)
+                항덩어리 = []
+                하위검색됨 = False
+
+                for 호 in 항.findall("호"):
+                    호내용 = 호.findtext("호내용", "") or ""
+                    호출력 = keyword_clean in clean(호내용)
+                    if 호출력:
+                        하위검색됨 = True
+                        항덩어리.append("&nbsp;&nbsp;" + highlight(호내용, query))
+
+                    for 목 in 호.findall("목"):
+                        for m in 목.findall("목내용"):
+                            if m.text and keyword_clean in clean(m.text):
+                                줄들 = [line.strip() for line in m.text.splitlines() if line.strip()]
+                                줄들 = [highlight(line, query) for line in 줄들]
+                                if 줄들:
+                                    하위검색됨 = True
+                                    항덩어리.append(
+                                        "<div style='margin:0;padding:0'>" +
+                                        "<br>".join("&nbsp;&nbsp;&nbsp;&nbsp;" + line for line in 줄들) +
+                                        "</div>"
+                                    )
+
+                if 항출력 or 하위검색됨:
+                    if not 조출력 and not 첫_항출력됨:
+                        출력덩어리.append(f"{highlight(조문내용, query)} {highlight(항내용, query)}")
+                        첫_항출력됨 = True
+                    elif not 첫_항출력됨:
+                        출력덩어리.append(highlight(항내용, query))
+                        첫_항출력됨 = True
+                    else:
+                        출력덩어리.append(highlight(항내용, query))
+                    출력덩어리.extend(항덩어리)
+
+            if 출력덩어리:
+                law_results.append("<br>".join(출력덩어리))
+
+        if law_results:
+            result_dict[law["법령명"]] = law_results
+
+    return result_dict
+
+
 # 조사 판별
 def has_batchim(word):
     code = ord(word[-1]) - 0xAC00
