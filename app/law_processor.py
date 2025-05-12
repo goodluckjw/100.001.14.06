@@ -130,8 +130,7 @@ def run_amendment_logic(find_word, replace_word):
 
     return amendment_results if amendment_results else ["⚠️ 개정 대상 조문이 없습니다."]
 
-# 기존 검색 유지
-run_search_logic = run_amendment_logic  # 실제 검색 로직은 별도 구현 필요
+# 기존 검색 유지 run_search_logic = run_amendment_logic  # 실제 검색 로직은 별도 구현 필요
 
 
 def run_search_logic(query, unit="법률"):
