@@ -6,14 +6,15 @@ import os
 import unicodedata
 from collections import defaultdict
 
-# API 설정
 OC = os.getenv("OC", "chetera")
 BASE = "http://www.law.go.kr"
 
-# 법령 목록 검색
+# API 호출: 법률 목록 검색
 def get_law_list_from_api(query):
-    encoded_query = quote(f'"{query}"')
-    page, laws = 1, []
+    exact_query = f'"{query}"'
+    encoded_query = quote(exact_query)
+    page = 1
+    laws = []
     while True:
         url = f"{BASE}/DRF/lawSearch.do?OC={OC}&target=law&type=XML&display=100&page={page}&search=2&knd=A0002&query={encoded_query}"
         res = requests.get(url, timeout=10)
@@ -31,7 +32,7 @@ def get_law_list_from_api(query):
         page += 1
     return laws
 
-# 법령 본문 조회
+# API 호출: 법률 본문 조회
 def get_law_text_by_mst(mst):
     url = f"{BASE}/DRF/lawService.do?OC={OC}&target=law&MST={mst}&type=XML"
     try:
@@ -41,61 +42,72 @@ def get_law_text_by_mst(mst):
     except:
         return None
 
-# 유틸 함수
+# 문자 정리
 def clean(text):
     return re.sub(r"\s+", "", text or "")
 
+# 조문번호 처리
+def make_article_number(조문번호, 조문가지번호):
+    return f"제{조문번호}조의{조문가지번호}" if 조문가지번호 and 조문가지번호 != "0" else f"제{조문번호}조"
+
+# 유니코드 숫자 제거
+def normalize_number(text):
+    try:
+        return str(int(unicodedata.numeric(text)))
+    except:
+        return text
+
+# 조사 판별
 def has_batchim(word):
-    return (ord(word[-1]) - 0xAC00) % 28 != 0
+    code = ord(word[-1]) - 0xAC00
+    return (code % 28) != 0
 
 def has_rieul_batchim(word):
-    return (ord(word[-1]) - 0xAC00) % 28 == 8
+    code = ord(word[-1]) - 0xAC00
+    return (code % 28) == 8
 
+# 조사 규칙 적용
+def apply_josa_rule(orig_chunk, replace_chunk, josa):
+    b_has_batchim = has_batchim(replace_chunk)
+    b_has_rieul = has_rieul_batchim(replace_chunk)
+    if josa is None:
+        if has_batchim(orig_chunk):
+            return f'“{orig_chunk}”을 “{replace_chunk}”로 한다.'
+        else:
+            return f'“{orig_chunk}”를 “{replace_chunk}”로 한다.'
+    rules = {
+        "을": lambda: f'“{orig_chunk}”을 “{replace_chunk}”{"로" if b_has_rieul else "으로"} 한다.' if has_batchim(orig_chunk) else f'“{orig_chunk}을”을 “{replace_chunk}를”로 한다.',
+        "를": lambda: f'“{orig_chunk}를”을 “{replace_chunk}을”로 한다.' if has_batchim(orig_chunk) else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
+        "과": lambda: f'“{orig_chunk}”과 “{replace_chunk}”로 한다.' if has_batchim(orig_chunk) else f'“{orig_chunk}과”를 “{replace_chunk}와”로 한다.',
+        "와": lambda: f'“{orig_chunk}와”를 “{replace_chunk}과”로 한다.' if has_batchim(orig_chunk) else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
+        "이": lambda: f'“{orig_chunk}”을 “{replace_chunk}”로 한다.' if has_batchim(orig_chunk) else f'“{orig_chunk}이”를 “{replace_chunk}가”로 한다.',
+        "가": lambda: f'“{orig_chunk}가”를 “{replace_chunk}이”로 한다.' if has_batchim(orig_chunk) else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
+        "이나": lambda: f'“{orig_chunk}이나”를 “{replace_chunk}나”로 한다.' if not b_has_batchim else f'“{orig_chunk}”을 “{replace_chunk}”로 한다.',
+        "나": lambda: f'“{orig_chunk}나”를 “{replace_chunk}이나”로 한다.' if b_has_batchim else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
+        "으로": lambda: f'“{orig_chunk}으로”를 “{replace_chunk}로”로 한다.' if not b_has_batchim or b_has_rieul else f'“{orig_chunk}”을 “{replace_chunk}”으로 한다.',
+        "로": lambda: f'“{orig_chunk}로”를 “{replace_chunk}으로”로 한다.' if has_batchim(orig_chunk) and not has_rieul_batchim(orig_chunk) else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
+        "는": lambda: f'“{orig_chunk}는”을 “{replace_chunk}은”으로 한다.' if b_has_batchim else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
+        "은": lambda: f'“{orig_chunk}은”을 “{replace_chunk}는”으로 한다.' if not b_has_batchim else f'“{orig_chunk}”을 “{replace_chunk}”로 한다.',
+    }
+    return rules.get(josa, lambda: f'“{orig_chunk}”를 “{replace_chunk}”로 한다.')()
+
+# 덩어리+조사 추출
 def extract_chunk_and_josa(token, searchword):
-    suffixes = ["으로", "이나", "과", "와", "을", "를", "이", "가", "나", "로", "은", "는"]
-    pattern = re.compile(rf'({searchword})(?:{"|".join(suffixes)})?$')
-    m = pattern.match(token)
-    if m:
-        return m.group(1), token[len(searchword):] if token[len(searchword):] in suffixes else None
+    josa_list = ["으로", "이나", "과", "와", "을", "를", "이", "가", "나", "로", "은", "는"]
+    pattern = re.compile(rf'({searchword})(?:{"|".join(josa_list)})?$')
+    match = pattern.match(token)
+    if match:
+        chunk = searchword
+        suffix = token[len(searchword):]
+        josa = suffix if suffix in josa_list else None
+        return chunk, josa
     return token, None
 
+# 위치 그룹화
 def group_locations(locs):
     if len(locs) == 1:
         return locs[0]
     return 'ㆍ'.join(locs[:-1]) + ' 및 ' + locs[-1]
-
-# 조사 규칙 적용
-def apply_josa_rule(orig_chunk, replace_chunk, josa):
-    b_batchim = has_batchim(replace_chunk)
-    b_rieul = has_rieul_batchim(replace_chunk)
-
-    if josa is None:
-        if not has_batchim(orig_chunk):
-            return f'“{orig_chunk}”를 “{replace_chunk}”로 한다.' if not b_batchim or b_rieul else f'“{orig_chunk}”를 “{replace_chunk}”으로 한다.'
-        else:
-            return f'“{orig_chunk}”을 “{replace_chunk}”로 한다.' if not b_batchim or b_rieul else f'“{orig_chunk}”을 “{replace_chunk}”으로 한다.'
-
-    # 추가 규칙 적용
-    rules = {
-        "을": lambda: f'“{orig_chunk}”을 “{replace_chunk}”로 한다.' if b_rieul else f'“{orig_chunk}”을 “{replace_chunk}”으로 한다.' if b_batchim else f'“{orig_chunk}을”을 “{replace_chunk}를”로 한다.',
-        "를": lambda: f'“{orig_chunk}를”을 “{replace_chunk}을”로 한다.' if b_batchim else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
-        "과": lambda: f'“{orig_chunk}과”를 “{replace_chunk}와”로 한다.' if not b_batchim else f'“{orig_chunk}”을 “{replace_chunk}”로 한다.',
-        "와": lambda: f'“{orig_chunk}와”를 “{replace_chunk}과”로 한다.' if b_batchim else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
-        "이": lambda: f'“{orig_chunk}이”를 “{replace_chunk}가”로 한다.' if not b_batchim else f'“{orig_chunk}”을 “{replace_chunk}”로 한다.',
-        "가": lambda: f'“{orig_chunk}가”를 “{replace_chunk}이”로 한다.' if b_batchim else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
-        "이나": lambda: f'“{orig_chunk}이나”를 “{replace_chunk}나”로 한다.' if not b_batchim else f'“{orig_chunk}”을 “{replace_chunk}”로 한다.',
-        "나": lambda: f'“{orig_chunk}나”를 “{replace_chunk}이나”로 한다.' if b_batchim else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
-        "으로": lambda: f'“{orig_chunk}으로”를 “{replace_chunk}로”로 한다.' if not b_batchim or b_rieul else f'“{orig_chunk}”을 “{replace_chunk}”으로 한다.',
-        "로": lambda: f'“{orig_chunk}로”를 “{replace_chunk}으로”로 한다.' if b_batchim and not b_rieul else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
-        "는": lambda: f'“{orig_chunk}는”을 “{replace_chunk}은”으로 한다.' if b_batchim else f'“{orig_chunk}”를 “{replace_chunk}”로 한다.',
-        "은": lambda: f'“{orig_chunk}은”을 “{replace_chunk}는”으로 한다.' if not b_batchim else f'“{orig_chunk}”을 “{replace_chunk}”로 한다.'
-    }
-    return rules.get(josa, lambda: f'“{orig_chunk}”를 “{replace_chunk}”로 한다.')()
-
-# 검색 기능
-def run_search_logic(query, unit="법률"):
-    # 구현 내용 생략 (기존 코드 사용 가능)
-    pass
 
 # 개정문 생성
 def run_amendment_logic(find_word, replace_word):
@@ -113,21 +125,21 @@ def run_amendment_logic(find_word, replace_word):
         for article in articles:
             조번호 = article.findtext("조문번호", "").strip()
             조가지번호 = article.findtext("조문가지번호", "").strip()
-            조문식별자 = f"제{조번호}조" + (f"의{조가지번호}" if 조가지번호 else "")
+            조문식별자 = make_article_number(조번호, 조가지번호)
             조문내용 = article.findtext("조문내용", "") or ""
             tokens = re.findall(r'[가-힣A-Za-z0-9]+', 조문내용)
             for token in tokens:
                 if find_word in token:
                     chunk, josa = extract_chunk_and_josa(token, find_word)
-                    chunk_map[(chunk, replace_word, josa)].append(조문식별자)
+                    바꿀덩어리 = chunk.replace(find_word, replace_word)
+                    chunk_map[(chunk, 바꿀덩어리, josa)].append(조문식별자)
 
         if not chunk_map:
             continue
-
         parts = []
-        for (chunk, replacement, josa), locs in chunk_map.items():
-            loc_str = group_locations(locs)
-            amendment = apply_josa_rule(chunk, replacement, josa)
+        for (chunk, 바꿀덩어리, josa), loc_list in chunk_map.items():
+            loc_str = group_locations(loc_list)
+            amendment = apply_josa_rule(chunk, 바꿀덩어리, josa)
             parts.append(f'{loc_str} 중 {amendment}')
 
         prefix = chr(9312 + idx) if idx < 20 else f'({idx + 1})'
