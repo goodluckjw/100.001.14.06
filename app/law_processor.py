@@ -32,7 +32,7 @@ def get_law_list_from_api(query):
         page += 1
     return laws
 
-# 법령 본문 조회 API
+# 본문 조회 API
 def get_law_text_by_mst(mst):
     url = f"{BASE}/DRF/lawService.do?OC={OC}&target=law&MST={mst}&type=XML"
     try:
@@ -42,6 +42,63 @@ def get_law_text_by_mst(mst):
     except:
         return None
 
+# 보조 함수들
+def clean(text):
+    return re.sub(r"\s+", "", text or "")
+
+def normalize_number(text):
+    try:
+        return str(int(unicodedata.numeric(text)))
+    except:
+        return text
+
+def make_article_number(조문번호, 조문가지번호):
+    return f"제{조문번호}조의{조문가지번호}" if 조문가지번호 and 조문가지번호 != "0" else f"제{조문번호}조"
+
+def has_batchim(word):
+    code = ord(word[-1]) - 0xAC00
+    return (code % 28) != 0
+
+def has_rieul_batchim(word):
+    code = ord(word[-1]) - 0xAC00
+    return (code % 28) == 8
+
+def extract_chunk_and_josa(token, searchword):
+    suffix_exclude = ["의", "에", "에서", "으로서", "등", "에게"]
+    for suffix in suffix_exclude:
+        if token.endswith(suffix):
+            token = token[:-len(suffix)]
+            break
+    josa_list = ["으로", "이나", "과", "와", "을", "를", "이", "가", "나", "로", "은", "는"]
+    pattern = re.compile(rf'({searchword}[가-힣0-9]*?)(?:{"|".join(josa_list)})?$')
+    match = pattern.match(token)
+    if match:
+        chunk = match.group(1)
+        josa = token[len(chunk):] if token[len(chunk):] in josa_list else None
+        return chunk, josa
+    return token, None
+
+def apply_josa_rule(orig, replaced, josa):
+    b_has = has_batchim(replaced)
+    b_rieul = has_rieul_batchim(replaced)
+    if josa is None:
+        return f'“{orig}”을 “{replaced}”로 한다.' if has_batchim(orig) else f'“{orig}”를 “{replaced}”로 한다.'
+    rules = {
+        "을": lambda: f'“{orig}”을 “{replaced}”로 한다.' if b_has else f'“{orig}”를 “{replaced}”로 한다.',
+        "를": lambda: f'“{orig}”를 “{replaced}”로 한다.' if not b_has else f'“{orig}”을 “{replaced}”로 한다.',
+        "이": lambda: f'“{orig}”이 “{replaced}”가 된다.' if b_has else f'“{orig}”가 “{replaced}”가 된다.',
+        "가": lambda: f'“{orig}”가 “{replaced}”가 된다.' if not b_has else f'“{orig}”이 “{replaced}”가 된다.',
+        "은": lambda: f'“{orig}”은 “{replaced}”로 한다.' if b_has else f'“{orig}”는 “{replaced}”로 한다.',
+        "는": lambda: f'“{orig}”는 “{replaced}”로 한다.' if not b_has else f'“{orig}”은 “{replaced}”로 한다.',
+        "으로": lambda: f'“{orig}”으로 “{replaced}”로 한다.' if b_has and not b_rieul else f'“{orig}”로 “{replaced}”로 한다.',
+        "로": lambda: f'“{orig}”로 “{replaced}”로 한다.' if not b_has or b_rieul else f'“{orig}”으로 “{replaced}”로 한다.'
+    }
+    return rules.get(josa, lambda: f'“{orig}”을 “{replaced}”로 한다.')()
+
+def group_locations(loc_list):
+    if len(loc_list) == 1:
+        return loc_list[0]
+    return 'ㆍ'.join(loc_list[:-1]) + ' 및 ' + loc_list[-1]
 
 def run_search_logic(query, unit="법률"):
     result_dict = {}
@@ -116,71 +173,6 @@ def run_search_logic(query, unit="법률"):
 
     return result_dict
 
-# 보조 함수들
-def clean(text):
-    return re.sub(r"\s+", "", text or "")
-
-def normalize_number(text):
-    try:
-        return str(int(unicodedata.numeric(text)))
-    except:
-        return text
-
-def make_article_number(조문번호, 조문가지번호):
-    return f"제{조문번호}조의{조문가지번호}" if 조문가지번호 and 조문가지번호 != "0" else f"제{조문번호}조"
-
-def has_batchim(word):
-    code = ord(word[-1]) - 0xAC00
-    return (code % 28) != 0
-
-def has_rieul_batchim(word):
-    code = ord(word[-1]) - 0xAC00
-    return (code % 28) == 8
-
-def highlight(text, keyword):
-    escaped = re.escape(keyword)
-    return re.sub(f"({escaped})", r"<span style='color:red'>\1</span>", text or "")
-
-# 조사 규칙 적용
-def apply_josa_rule(orig, replaced, josa):
-    b_has = has_batchim(replaced)
-    b_rieul = has_rieul_batchim(replaced)
-    if josa is None:
-        return f'“{orig}”을 “{replaced}”로 한다.' if has_batchim(orig) else f'“{orig}”를 “{replaced}”로 한다.'
-    rules = {
-        "을": lambda: f'“{orig}”을 “{replaced}”로 한다.' if b_has else f'“{orig}”를 “{replaced}”로 한다.',
-        "를": lambda: f'“{orig}”를 “{replaced}”로 한다.' if not b_has else f'“{orig}”을 “{replaced}”로 한다.',
-        "이": lambda: f'“{orig}”이 “{replaced}”가 된다.' if b_has else f'“{orig}”가 “{replaced}”가 된다.',
-        "가": lambda: f'“{orig}”가 “{replaced}”가 된다.' if not b_has else f'“{orig}”이 “{replaced}”가 된다.',
-        "은": lambda: f'“{orig}”은 “{replaced}”로 한다.' if b_has else f'“{orig}”는 “{replaced}”로 한다.',
-        "는": lambda: f'“{orig}”는 “{replaced}”로 한다.' if not b_has else f'“{orig}”은 “{replaced}”로 한다.',
-        "으로": lambda: f'“{orig}”으로 “{replaced}”로 한다.' if b_has and not b_rieul else f'“{orig}”로 “{replaced}”로 한다.',
-        "로": lambda: f'“{orig}”로 “{replaced}”로 한다.' if not b_has or b_rieul else f'“{orig}”으로 “{replaced}”로 한다.'
-    }
-    return rules.get(josa, lambda: f'“{orig}”을 “{replaced}”로 한다.')()
-
-# 조사 추출 및 덩어리화
-def extract_chunk_and_josa(token, searchword):
-    suffix_exclude = ["의", "에", "에서", "으로서", "등", "에게"]
-    for suffix in suffix_exclude:
-        if token.endswith(suffix):
-            token = token[:-len(suffix)]
-            break
-    josa_list = ["으로", "이나", "과", "와", "을", "를", "이", "가", "나", "로", "은", "는"]
-    pattern = re.compile(rf'({searchword}[가-힣0-9]*?)(?:{"|".join(josa_list)})?$')
-    match = pattern.match(token)
-    if match:
-        chunk = match.group(1)
-        josa = token[len(chunk):] if token[len(chunk):] in josa_list else None
-        return chunk, josa
-    return token, None
-
-# 위치 그룹 문자열
-def group_locations(loc_list):
-    if len(loc_list) == 1:
-        return loc_list[0]
-    return 'ㆍ'.join(loc_list[:-1]) + ' 및 ' + loc_list[-1]
-
 # 개정문 생성 로직
 def run_amendment_logic(find_word, replace_word):
     amendment_results = []
@@ -199,14 +191,12 @@ def run_amendment_logic(find_word, replace_word):
             조번호 = article.findtext("조문번호", "").strip()
             조가지번호 = article.findtext("조문가지번호", "").strip()
             조문식별자 = make_article_number(조번호, 조가지번호)
-            조문내용 = article.findtext("조문내용", "") or ""
 
-            항들 = article.findall("항")
-            for 항 in 항들:
+            for 항 in article.findall("항"):
                 항번호 = normalize_number(항.findtext("항번호", "").strip())
-                항내용 = 항.findtext("항내용", "") or ""
 
                 for 호 in 항.findall("호"):
+                    호번호 = 호.findtext("호번호")
                     호내용 = 호.findtext("호내용", "") or ""
                     if find_word in clean(호내용):
                         tokens = re.findall(r'[가-힣A-Za-z0-9]+', 호내용)
@@ -214,14 +204,21 @@ def run_amendment_logic(find_word, replace_word):
                             if find_word in token:
                                 chunk, josa = extract_chunk_and_josa(token, find_word)
                                 replaced = chunk.replace(find_word, replace_word)
-                                chunk_map[(chunk, replaced, josa)].append(f"{조문식별자}제{항번호}항제{호.findtext('호번호')}호")
+                                chunk_map[(chunk, replaced, josa)].append(f"{조문식별자}제{항번호}항제{호번호}호")
 
-                for 목 in 항.findall("호/목"):
-                    for m in 목.findall("목내용"):
-                        if find_word in clean(m.text or ""):
-                            chunk, josa = extract_chunk_and_josa(m.text.strip(), find_word)
-                            replaced = chunk.replace(find_word, replace_word)
-                            chunk_map[(chunk, replaced, josa)].append(f"{조문식별자}제{항번호}항제{호.findtext('호번호')}호{목.findtext('목번호')}목")
+                    for 목 in 호.findall("목"):
+                        목번호 = 목.findtext("목번호")
+                        for m in 목.findall("목내용"):
+                            if m.text:
+                                줄들 = [line.strip() for line in m.text.splitlines() if line.strip()]
+                                for 줄 in 줄들:
+                                    if find_word in clean(줄):
+                                        tokens = re.findall(r'[가-힣A-Za-z0-9]+', 줄)
+                                        for token in tokens:
+                                            if find_word in token:
+                                                chunk, josa = extract_chunk_and_josa(token, find_word)
+                                                replaced = chunk.replace(find_word, replace_word)
+                                                chunk_map[(chunk, replaced, josa)].append(f"{조문식별자}제{항번호}항제{호번호}호{목번호}목")
 
         if not chunk_map:
             continue
@@ -235,6 +232,8 @@ def run_amendment_logic(find_word, replace_word):
         prefix = chr(9312 + idx) if idx < 20 else f'({idx + 1})'
         amendment_results.append(f"{prefix} {law_name} 일부를 다음과 같이 개정한다.\n" + "\n".join(result_lines))
 
-
     return amendment_results if amendment_results else ["⚠️ 개정 대상 조문이 없습니다."]
+
+
+
 
