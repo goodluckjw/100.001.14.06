@@ -32,7 +32,7 @@ def get_law_list_from_api(query):
         page += 1
     return laws
 
-# 본문 조회 API
+# 법령 본문 조회 API
 def get_law_text_by_mst(mst):
     url = f"{BASE}/DRF/lawService.do?OC={OC}&target=law&MST={mst}&type=XML"
     try:
@@ -42,7 +42,7 @@ def get_law_text_by_mst(mst):
     except:
         return None
 
-# 보조 함수들
+# 보조 함수
 def clean(text):
     return re.sub(r"\s+", "", text or "")
 
@@ -86,8 +86,8 @@ def apply_josa_rule(orig, replaced, josa):
     rules = {
         "을": lambda: f'“{orig}”을 “{replaced}”로 한다.' if b_has else f'“{orig}”를 “{replaced}”로 한다.',
         "를": lambda: f'“{orig}”를 “{replaced}”로 한다.' if not b_has else f'“{orig}”을 “{replaced}”로 한다.',
-        "이": lambda: f'“{orig}”이 “{replaced}”가 된다.' if b_has else f'“{orig}”가 “{replaced}”가 된다.',
-        "가": lambda: f'“{orig}”가 “{replaced}”가 된다.' if not b_has else f'“{orig}”이 “{replaced}”가 된다.',
+        "이": lambda: f'“{orig}”을 “{replaced}”로 한다.' if b_has else f'“{orig}”를 “{replaced}”로 한다.',
+        "가": lambda: f'“{orig}”를 “{replaced}”로 한다.' if not b_has else f'“{orig}”을 “{replaced}”로 한다.',
         "은": lambda: f'“{orig}”은 “{replaced}”로 한다.' if b_has else f'“{orig}”는 “{replaced}”로 한다.',
         "는": lambda: f'“{orig}”는 “{replaced}”로 한다.' if not b_has else f'“{orig}”은 “{replaced}”로 한다.',
         "으로": lambda: f'“{orig}”으로 “{replaced}”로 한다.' if b_has and not b_rieul else f'“{orig}”로 “{replaced}”로 한다.',
@@ -173,7 +173,7 @@ def run_search_logic(query, unit="법률"):
 
     return result_dict
 
-# 개정문 생성 로직
+
 def run_amendment_logic(find_word, replace_word):
     amendment_results = []
     for idx, law in enumerate(get_law_list_from_api(find_word)):
@@ -182,7 +182,6 @@ def run_amendment_logic(find_word, replace_word):
         xml_data = get_law_text_by_mst(mst)
         if not xml_data:
             continue
-
         tree = ET.fromstring(xml_data)
         articles = tree.findall(".//조문단위")
         chunk_map = defaultdict(list)
@@ -194,7 +193,6 @@ def run_amendment_logic(find_word, replace_word):
 
             for 항 in article.findall("항"):
                 항번호 = normalize_number(항.findtext("항번호", "").strip())
-
                 for 호 in 항.findall("호"):
                     호번호 = 호.findtext("호번호")
                     호내용 = 호.findtext("호내용", "") or ""
@@ -233,7 +231,4 @@ def run_amendment_logic(find_word, replace_word):
         amendment_results.append(f"{prefix} {law_name} 일부를 다음과 같이 개정한다.\n" + "\n".join(result_lines))
 
     return amendment_results if amendment_results else ["⚠️ 개정 대상 조문이 없습니다."]
-
-
-
-
+    
