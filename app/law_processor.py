@@ -1,3 +1,4 @@
+
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
@@ -9,7 +10,6 @@ from collections import defaultdict
 OC = os.getenv("OC", "chetera")
 BASE = "http://www.law.go.kr"
 
-# 법령 목록 조회 API
 def get_law_list_from_api(query):
     exact_query = f'"{query}"'
     encoded_query = quote(exact_query)
@@ -32,7 +32,6 @@ def get_law_list_from_api(query):
         page += 1
     return laws
 
-# 법령 본문 조회 API
 def get_law_text_by_mst(mst):
     url = f"{BASE}/DRF/lawService.do?OC={OC}&target=law&MST={mst}&type=XML"
     try:
@@ -42,7 +41,6 @@ def get_law_text_by_mst(mst):
     except:
         return None
 
-# 보조 함수
 def clean(text):
     return re.sub(r"\s+", "", text or "")
 
@@ -86,8 +84,8 @@ def apply_josa_rule(orig, replaced, josa):
     rules = {
         "을": lambda: f'“{orig}”을 “{replaced}”로 한다.' if b_has else f'“{orig}”를 “{replaced}”로 한다.',
         "를": lambda: f'“{orig}”를 “{replaced}”로 한다.' if not b_has else f'“{orig}”을 “{replaced}”로 한다.',
-        "이": lambda: f'“{orig}”을 “{replaced}”로 한다.' if b_has else f'“{orig}”를 “{replaced}”로 한다.',
-        "가": lambda: f'“{orig}”를 “{replaced}”로 한다.' if not b_has else f'“{orig}”을 “{replaced}”로 한다.',
+        "이": lambda: f'“{orig}”이 “{replaced}”가 된다.' if b_has else f'“{orig}”가 “{replaced}”가 된다.',
+        "가": lambda: f'“{orig}”가 “{replaced}”가 된다.' if not b_has else f'“{orig}”이 “{replaced}”가 된다.',
         "은": lambda: f'“{orig}”은 “{replaced}”로 한다.' if b_has else f'“{orig}”는 “{replaced}”로 한다.',
         "는": lambda: f'“{orig}”는 “{replaced}”로 한다.' if not b_has else f'“{orig}”은 “{replaced}”로 한다.',
         "으로": lambda: f'“{orig}”으로 “{replaced}”로 한다.' if b_has and not b_rieul else f'“{orig}”로 “{replaced}”로 한다.',
@@ -228,7 +226,7 @@ def run_amendment_logic(find_word, replace_word):
             result_lines.append(f"{loc_str} 중 {rule}")
 
         prefix = chr(9312 + idx) if idx < 20 else f'({idx + 1})'
-        amendment_results.append(f"{prefix} {law_name} 일부를 다음과 같이 개정한다.\n" + "\n".join(result_lines))
+        amendment_results.append(f"{prefix} {law_name} 일부를 다음과 같이 개정한다." + "/n".join(result_lines))
 
     return amendment_results if amendment_results else ["⚠️ 개정 대상 조문이 없습니다."]
-    
+
